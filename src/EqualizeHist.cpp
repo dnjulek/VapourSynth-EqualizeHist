@@ -66,6 +66,8 @@ static const VSFrame* VS_CC EqualizeHistGetFrame(int n, int activationReason, vo
 		}
 
 		vsapi->freeFrame(src);
+		VSMap* dstProps = vsapi->getFramePropertiesRW(dst);
+		vsapi->mapSetInt(dstProps, "_ColorRange", 0, maReplace);
 		return dst;
 	}
 	return nullptr;
