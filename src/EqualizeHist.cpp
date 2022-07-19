@@ -11,8 +11,9 @@ struct EqualizeHistData final {
 static void process_c(const uint8_t* srcp, uint8_t* dstp, ptrdiff_t stride, int width, int height, const EqualizeHistData* const VS_RESTRICT d) noexcept {
 	int total = (width * height);
 	float scale = 255.0f / total;
-	int hist[256]{};
-	int lut[257]{};
+	const int histSize = 256;
+	int hist[histSize]{};
+	int lut[histSize]{};
 	int sum = 0;
 
 	for (int y = 0; y < height; y++) {
@@ -24,7 +25,7 @@ static void process_c(const uint8_t* srcp, uint8_t* dstp, ptrdiff_t stride, int 
 
 	srcp -= total;
 
-	for (int i = 0; i < 256; i++) {
+	for (int i = 0; i < histSize; i++) {
 		sum += hist[i];
 		auto val = roundf(sum * scale);
 		lut[i] = static_cast<int>(val);
