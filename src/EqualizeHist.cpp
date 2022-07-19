@@ -23,8 +23,10 @@ static void process_c(const uint8_t* srcp, uint8_t* dstp, ptrdiff_t stride, int 
 		srcp += stride;
 	}
 
-	for (int y = 0; y < height; y++)
-		srcp -= stride;
+	srcp -= (stride * height);
+
+	//for (int y = 0; y < height; y++)
+	//	srcp -= stride;
 
 	for (int i = 0; i < histSize; i++) {
 		sum += hist[i];
