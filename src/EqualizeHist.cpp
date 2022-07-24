@@ -1,48 +1,60 @@
-#include <memory>
-
-#include "VapourSynth4.h"
-#include "VSHelper4.h"
+#include "shared.h"
 
 struct EqualizeHistData final {
 	VSNode* node;
 	const VSVideoInfo* vi;
 };
 
-static void process_c(const uint8_t* srcp, uint8_t* dstp, ptrdiff_t stride, int width, int height, const EqualizeHistData* const VS_RESTRICT d) noexcept {
-	int total = (width * height);
-	float scale = 255.0f / total;
-	const int histSize = 256;
-	int hist[histSize]{};
-	int lut[histSize]{};
-	int sum = 0;
+template<typename pixel_t>
+static void process_c(const VSFrame* src, VSFrame* dst, const EqualizeHistData* const VS_RESTRICT d, const VSAPI* vsapi) noexcept {
+	for (int plane = 0; plane < d->vi->format.numPlanes; plane++) {
+		const auto w{ vsapi->getFrameWidth(src, plane) };
+		const auto h{ vsapi->getFrameHeight(src, plane) };
+		const auto stride{ vsapi->getStride(src, plane) / d->vi->format.bytesPerSample };
+		auto srcp{ reinterpret_cast<const pixel_t*>(vsapi->getReadPtr(src, plane)) };
+		auto dstp{ reinterpret_cast<pixel_t*>(vsapi->getWritePtr(dst, plane)) };
 
-	for (int y = 0; y < height; y++) {
-		for (int x = 0; x < width; x++)
-			hist[srcp[x]]++;
+		const int buffersize = (1 << d->vi->format.bitsPerSample);
+		uint32_t* hist = new uint32_t[buffersize];
+		uint32_t* lut = new uint32_t[buffersize];
+		const int peak = buffersize - 1;
+		const float scale = static_cast<float>(peak) / (w * h);
+		int sum = 0;
 
-		srcp += stride;
-	}
+		std::fill_n(hist, buffersize, 0);
+		std::fill_n(lut, buffersize, 0);
 
-	srcp -= (stride * height);
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				hist[srcp[x]]++;
+			}
+			srcp += stride;
+		}
 
-	for (int i = 0; i < histSize; i++) {
-		sum += hist[i];
-		auto val = roundf(sum * scale);
-		lut[i] = static_cast<int>(val);
-	}
+		srcp -= (stride * h);
 
-	lut[0] = 0;
+		for (int i = 0; i < buffersize; i++) {
+			sum += hist[i];
+			auto val = roundf(sum * scale);
+			lut[i] = static_cast<int>(val);
+		}
 
-	for (int y = 0; y < height; y++) {
-		for (int x = 0; x < width; x++)
-			dstp[x] = lut[srcp[x]];
+		lut[0] = 0;
 
-		dstp += stride;
-		srcp += stride;
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++)
+				dstp[x] = lut[srcp[x]];
+
+			dstp += stride;
+			srcp += stride;
+		}
+
+		delete[] hist;
+		delete[] lut;
 	}
 }
 
-static const VSFrame* VS_CC EqualizeHistGetFrame(int n, int activationReason, void* instanceData, void** frameData, VSFrameContext* frameCtx, VSCore* core, const VSAPI* vsapi) {
+static const VSFrame* VS_CC equalizeHistGetFrame(int n, int activationReason, void* instanceData, void** frameData, VSFrameContext* frameCtx, VSCore* core, const VSAPI* vsapi) {
 	auto d{ static_cast<EqualizeHistData*>(instanceData) };
 
 	if (activationReason == arInitial) {
@@ -57,13 +69,11 @@ static const VSFrame* VS_CC EqualizeHistGetFrame(int n, int activationReason, vo
 
 		VSFrame* dst = vsapi->newVideoFrame(fi, width, height, src, core);
 
-		for (int plane = 0; plane < fi->numPlanes; plane++) {
-			const uint8_t* srcp = vsapi->getReadPtr(src, plane);
-			uint8_t* dstp = vsapi->getWritePtr(dst, plane);
-			ptrdiff_t stride = vsapi->getStride(src, plane);
-			int h = vsapi->getFrameHeight(src, plane);
-			int w = vsapi->getFrameWidth(src, plane);
-			process_c(srcp, dstp, stride, w, h, d);
+		if (d->vi->format.bytesPerSample == 1) {
+			process_c<uint8_t>(src, dst, d, vsapi);
+		}
+		else {
+			process_c<uint16_t>(src, dst, d, vsapi);
 		}
 
 		vsapi->freeFrame(src);
@@ -74,13 +84,13 @@ static const VSFrame* VS_CC EqualizeHistGetFrame(int n, int activationReason, vo
 	return nullptr;
 }
 
-static void VS_CC EqualizeHistFree(void* instanceData, [[maybe_unused]] VSCore* core, const VSAPI* vsapi) {
+static void VS_CC equalizeHistFree(void* instanceData, VSCore* core, const VSAPI* vsapi) {
 	auto d{ static_cast<EqualizeHistData*>(instanceData) };
 	vsapi->freeNode(d->node);
 	delete d;
 }
 
-static void VS_CC EqualizeHistCreate(const VSMap* in, VSMap* out, [[maybe_unused]] void* userData, VSCore* core, const VSAPI* vsapi) {
+void VS_CC equalizeHistCreate(const VSMap* in, VSMap* out, void* userData, VSCore* core, const VSAPI* vsapi) {
 	auto d{ std::make_unique<EqualizeHistData>() };
 	int err{ 0 };
 
@@ -89,21 +99,13 @@ static void VS_CC EqualizeHistCreate(const VSMap* in, VSMap* out, [[maybe_unused
 
 	if (!vsh::isConstantVideoFormat(d->vi) ||
 		d->vi->format.sampleType != stInteger ||
-		d->vi->format.bitsPerSample != 8) {
-		vsapi->mapSetError(out, "EqualizeHist: only constant format 8-bit integer input supported");
+		(d->vi->format.bytesPerSample != 1 && d->vi->format.bytesPerSample != 2)) {
+		vsapi->mapSetError(out, "EqualizeHist: only constant 8-16 bit int formats supported");
 		vsapi->freeNode(d->node);
 		return;
 	}
 
 	VSFilterDependency deps[] = { {d->node, rpStrictSpatial} };
-	vsapi->createVideoFilter(out, "EqualizeHist", d->vi, EqualizeHistGetFrame, EqualizeHistFree, fmParallel, deps, 1, d.get(), core);
+	vsapi->createVideoFilter(out, "EqualizeHist", d->vi, equalizeHistGetFrame, equalizeHistFree, fmParallel, deps, 1, d.get(), core);
 	d.release();
-}
-
-VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI* vspapi) {
-	vspapi->configPlugin("com.julek.ehist", "ehist", "Histogram Equalization", VS_MAKE_VERSION(1, 0), VAPOURSYNTH_API_VERSION, 0, plugin);
-	vspapi->registerFunction("EqualizeHist",
-		"clip:vnode;",
-		"clip:vnode;",
-		EqualizeHistCreate, nullptr, plugin);
 }
