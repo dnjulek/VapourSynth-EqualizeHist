@@ -82,7 +82,7 @@ void VS_CC claheCreate(const VSMap* in, VSMap* out, void* userData, VSCore* core
 
 	d->limit = vsapi->mapGetFloatSaturated(in, "limit", 0, &err);
 	if (err)
-		d->limit = 5.0f;
+		d->limit = 7.0f;
 
 	d->tile = vsapi->mapGetIntSaturated(in, "tile", 0, &err);
 	if (err)
