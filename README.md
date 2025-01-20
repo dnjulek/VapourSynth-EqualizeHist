@@ -1,3 +1,6 @@
+> [!CAUTION] 
+> DEPRECATED! Use https://github.com/dnjulek/vapoursynth-zip
+
 ## EqualizeHist
 
 [Histogram Equalization](https://en.wikipedia.org/wiki/Histogram_equalization) for Vapoursynth.
